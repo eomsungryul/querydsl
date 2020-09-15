@@ -19,6 +19,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.dsl.CaseBuilder;
+import com.querydsl.core.types.dsl.Expressions;
+import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
 import study.querydsl.entity.Member;
@@ -447,7 +450,119 @@ public class QuerydslBasicTest {
 	//서브 쿼리
 	//-------------------------------------------------------------------------------------
 
+	/**
+	 * 나이가 가장 많은 회원 조회
+	 */
+	@Test
+	public void subQuery() throws Exception {
+		
+		//서브쿼리는 바깥에있는 알리아스와 겹치면 안됨 그래서 서브로 사용
+		 QMember memberSub = new QMember("memberSub");
+		 //서브쿼리는 JPAExpressions 사용
+		 
+		 List<Member> result = queryFactory
+							 .selectFrom(member)
+							 .where(member.age.eq(
+								 JPAExpressions
+								 .select(memberSub.age.max())
+								 .from(memberSub)
+							 ))
+							 .fetch();
+		 
+		 assertThat(result).extracting("age")
+		 .containsExactly(40);
+	}
+	
+	/**
+	 * 나이가 평균 나이 이상인 회원
+	 */
+	@Test
+	public void subQueryGoe() throws Exception {
+		//GOE >=
+		QMember memberSub = new QMember("memberSub");
+		
+		 List<Member> result = queryFactory
+							 .selectFrom(member)
+							 .where(member.age.goe(
+								 JPAExpressions
+								 .select(memberSub.age.avg())
+								 .from(memberSub)
+							 ))
+							 .fetch();
+		 
+		 assertThat(result).extracting("age")
+		 .containsExactly(30,40);
+	}
+	
+	/**
+	 * 서브쿼리 여러 건 처리, in 사용
+	 */
+	@Test
+	public void subQueryIn() throws Exception {
+		 //gt > 임
+		 QMember memberSub = new QMember("memberSub");
+		 
+		 List<Member> result = queryFactory
+							 .selectFrom(member)
+							 .where(member.age.in(
+								 JPAExpressions
+								 .select(memberSub.age)
+								 .from(memberSub)
+								 .where(memberSub.age.gt(10))
+							 ))
+							 .fetch();
+		 
+		 assertThat(result).extracting("age")
+		 .containsExactly(20, 30, 40);
+	}
+	
 
+	/**
+	 * select 절에 subquery
+	 */
+	@Test
+	public void selectSubQuery() throws Exception {
+
+		QMember memberSub = new QMember("memberSub");
+
+		List<Tuple> fetch = queryFactory
+							 .select(member.username,
+								 JPAExpressions
+								 .select(memberSub.age.avg())
+								 .from(memberSub)
+							 ).from(member)
+							 .fetch();
+		
+		for (Tuple tuple : fetch) {
+			 System.out.println("username = " + tuple.get(member.username));
+			 System.out.println("age = " +
+			 tuple.get(JPAExpressions.select(memberSub.age.avg())
+			 .from(memberSub)));
+		}
+		
+		
+		//이런식으로도 활용 
+//		import static com.querydsl.jpa.JPAExpressions.select;
+//		List<Member> result = queryFactory
+//		 .selectFrom(member)
+//		 .where(member.age.eq(
+//		 select(memberSub.age.max())
+//		 .from(memberSub)
+//		 ))
+//		 .fetch();
+		
+		
+		//from 절의 서브쿼리 한계
+//		JPA JPQL 서브쿼리의 한계점으로 from 절의 서브쿼리(인라인 뷰)는 지원하지 않는다. 당연히 Querydsl
+//		도 지원하지 않는다. 하이버네이트 구현체를 사용하면 select 절의 서브쿼리는 지원한다. Querydsl도 하
+//		이버네이트 구현체를 사용하면 select 절의 서브쿼리를 지원한
+		
+		//from 절의 서브쿼리 해결방안
+//		1. 서브쿼리를 join으로 변경한다. (가능한 상황도 있고, 불가능한 상황도 있다.)
+//		2. 애플리케이션에서 쿼리를 2번 분리해서 실행한다.
+//		3. nativeSQL을 사용한다
+	}
+	
 
 
 	//-------------------------------------------------------------------------------------
@@ -455,13 +570,93 @@ public class QuerydslBasicTest {
 	//-------------------------------------------------------------------------------------
 
 
+	/**
+	 * 단순한 조건
+	 */
+	@Test
+	public void basicCase() throws Exception {
+		
+		List<String> result = queryFactory
+				.select(member.age
+						.when(10).then("열살")
+						.when(20).then("스무살")
+						.otherwise("기타"))
+				.from(member)
+				.fetch();
+		
+		for(String s : result) {
+			System.out.println("s : "+s);
+		}
+		
+		
+	}
+	
+
+
+	/**
+	 * 복잡한 조건 
+	 */
+	@Test
+	public void complexCase() throws Exception {
+		
+		List<String> result = queryFactory
+				.select(new CaseBuilder()
+						.when(member.age.between(0, 20)).then("0~20살")
+						.when(member.age.between(21, 30)).then("21~30살")
+						.otherwise("기타"))
+				.from(member)
+				.fetch();
+		
+		for(String s : result) {
+			System.out.println("s : "+s);
+		}
+	}
+	
+	//Case문은 무조건 필터링을 하는 부분은 DB에서 안하고 애플리케이션에서 하는게좋음 
 
 
 	//-------------------------------------------------------------------------------------
-	//조인 - on절 (JPA 2.1부터 지원)
+	//상수, 문자더하기
 	//-------------------------------------------------------------------------------------
 
+	//Expressions.constant(xxx) 사용
+	
 
+	/**
+	 * 상수
+	 */
+	@Test
+	public void constant() throws Exception {
+		
+		List<Tuple> result = queryFactory
+							.select(member.username, Expressions.constant("A"))
+							.from(member)
+							.fetch();
+		
+		for(Tuple s : result) {
+			System.out.println("s : "+s);
+		}
+	}
+	
+
+	/**
+	 * 문자 더하기 concat
+	 */
+	@Test
+	public void concat() throws Exception {
+		
+		List<String> result = queryFactory
+				.select(member.username.concat("_").concat(member.age.stringValue()))
+				.from(member)
+				.where(member.username.eq("member1"))
+				.fetch();
+
+		for(String s : result) {
+			System.out.println("s : "+s);
+		}
+		
+	}
+	
 
 
 	//-------------------------------------------------------------------------------------
