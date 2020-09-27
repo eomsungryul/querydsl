@@ -17,13 +17,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.core.types.dsl.CaseBuilder;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
+import study.querydsl.dto.MemberDto;
+import study.querydsl.dto.QMemberDto;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.QMember;
 import study.querydsl.entity.QTeam;
@@ -657,22 +662,344 @@ public class QuerydslBasicTest {
 		
 	}
 	
+	//====================================================================================
+	//중급 문법
+	//====================================================================================
+	
+	//-------------------------------------------------------------------------------------
+	//프로젝션과 결과 반환 - 기본
+	//-------------------------------------------------------------------------------------
+
+	//	프로젝션 대상이 하나면 타입을 명확하게 지정할 수 있음
+	//	프로젝션 대상이 둘 이상이면 튜플이나 DTO로 조회
+	@Test
+	public void simpleProjection() throws Exception {
+		
+		List<String> result = queryFactory
+				 .select(member.username)
+				 .from(member)
+				 .fetch();
+
+		for(String s : result) {
+			System.out.println("s : "+s);
+		}
+	}
+	
+	
+	@Test
+	public void tupleProjection() throws Exception {
+		
+		List<Tuple> result = queryFactory
+				.select(member.username, member.age)
+				.from(member)
+				.fetch();
+		for (Tuple tuple : result) {
+			String username = tuple.get(member.username);
+			Integer age = tuple.get(member.age);
+			System.out.println("username=" + username);
+			System.out.println("age=" + age);
+		}
+		//튜플은 리파지토리내에만 쓰는것으로..
+		
+	}
 
 
 	//-------------------------------------------------------------------------------------
-	//조인 - on절 (JPA 2.1부터 지원)
+	//프로젝션과 결과 반환 - DTO 조회
+	//-------------------------------------------------------------------------------------
+	
+	//순수 JPA에서 DTO 조회 코드
+	@Test
+	public void findDtoByJPQL() throws Exception {
+		List<MemberDto> result = em.createQuery(
+				 "select new study.querydsl.dto.MemberDto(m.username, m.age) " +
+				 "from Member m", MemberDto.class)
+				 .getResultList();
+		
+		for(MemberDto mDto: result ) {
+			System.out.println("mDto : "+mDto);
+		}
+	}
+	
+	//	qdsl은 세가지 방법 지원 
+	//	1.프로퍼티 접근 - Setter
+	@Test
+	public void findDtoBySetter() throws Exception {
+		List<MemberDto> result = queryFactory
+				.select(Projections.bean(MemberDto.class,
+						member.username,
+						member.age))
+				.from(member)
+				.fetch();
+
+		for(MemberDto mDto: result ) {
+			System.out.println("mDto : "+mDto);
+		}
+	}
+	
+	//	2.필드 직접 접근 게터세터 무시하ㅗㄱㄷ 바로 박음
+
+	public void findDtoByField() throws Exception {
+		List<MemberDto> result = queryFactory
+				.select(Projections.fields(MemberDto.class,
+						member.username,
+						member.age))
+				.from(member)
+				.fetch();
+
+		for(MemberDto mDto: result ) {
+			System.out.println("mDto : "+mDto);
+		}
+	}
+	
+	//	3.생성자 사용
+
+	public void findDtoByConstructor() throws Exception {
+		List<MemberDto> result = queryFactory
+				.select(Projections.constructor(MemberDto.class,
+						member.username,
+						member.age))
+				.from(member)
+				.fetch();
+
+		for(MemberDto mDto: result ) {
+			System.out.println("mDto : "+mDto);
+		}
+	}
+	//번외 - 별칭이 다를 경우
+	//	프로퍼티나, 필드 접근 생성 방식에서 이름이 다를 때 해결 방안
+	//	ExpressionUtils.as(source,alias) : 필드나, 서브 쿼리에 별칭 적용
+	//	username.as("memberName") : 필드에 별칭 적용
+
+	//-------------------------------------------------------------------------------------
+	//프로젝션과 결과 반환 - @QueryProjection
+	//-------------------------------------------------------------------------------------
+
+	public void findDtoByQueryProjection() throws Exception {
+		List<MemberDto> result = queryFactory
+				.select(new QMemberDto(member.username, member.age))
+				.from(member)
+				.fetch();
+
+		for(MemberDto mDto: result ) {
+			System.out.println("mDto : "+mDto);
+		}
+		//컨스트럭터랑 같은데 컴파일 오류를 잡을수 있다
+		// 근데 실무에서는 컴파일도되서 가장 안정한 방법이긴한데... 
+		// 단점 애노테이션 넣어야되고 dto에 querydsl 의존성이 생김 
+	}
+	
+	//-------------------------------------------------------------------------------------
+	//동적 쿼리 - BooleanBuilder 사용
+	//-------------------------------------------------------------------------------------
+	
+	//	동적 쿼리를 해결하는 두가지 방식
+	//	BooleanBuilder
+	//	Where 다중 파라미터 사용
+	@Test
+	public void dynamicQuery_BooleanBuilder() throws Exception {
+		String usernameParam = "member1";
+		Integer ageParam = 10;
+		List<Member> result = searchMember1(usernameParam, ageParam);
+		assertThat(result.size()).isEqualTo(1);
+	}
+	
+	private List<Member> searchMember1(String usernameCond, Integer ageCond) {
+		BooleanBuilder builder = new BooleanBuilder();
+		if (usernameCond != null) {
+			builder.and(member.username.eq(usernameCond));
+		}
+		if (ageCond != null) {
+			builder.and(member.age.eq(ageCond));
+		}
+		return queryFactory
+				.selectFrom(member)
+				.where(builder)
+				.fetch();
+	}
+	
+	
+	//-------------------------------------------------------------------------------------
+	//동적 쿼리 - Where 다중 파라미터 사용
+	//-------------------------------------------------------------------------------------
+	
+	//실무에서 자주 사용하는 방법 
+	@Test
+	public void dynamicQuery_WhereParam() throws Exception {
+		String usernameParam = "member1";
+		Integer ageParam = 10;
+		List<Member> result = searchMember2(usernameParam, ageParam);
+		assertThat(result.size()).isEqualTo(1);
+	}
+	
+	private List<Member> searchMember2(String usernameCond, Integer ageCond) {
+		return queryFactory
+				.selectFrom(member)
+//				.where(usernameEq(usernameCond), ageEq(ageCond))
+				.where(allEq(usernameCond, ageCond))
+				.fetch();
+	}
+	
+	private BooleanExpression usernameEq(String usernameCond) {
+		return usernameCond != null ? member.username.eq(usernameCond) : null;
+	}
+	
+	private BooleanExpression ageEq(Integer ageCond) {
+		return ageCond != null ? member.age.eq(ageCond) : null;
+	}
+	//조합도 가능! 	
+	private BooleanExpression allEq(String usernameCond, Integer ageCond) {
+		return usernameEq(usernameCond).and(ageEq(ageCond));
+	}
+	//광고가 상태가 isValid 날짜가 IN : isServiceable  
+	
+	//실무할때는 이렇게 메서드 형태를 재활용할수있어서 개쩌는듯..
+	
+	//-------------------------------------------------------------------------------------
+	//수정, 삭제 벌크 연산
+	//-------------------------------------------------------------------------------------
+	
+	@Test
+	public void bulkUpdate() throws Exception {
+		
+		
+		//28살보다 아래면 비회원
+		long count = queryFactory
+				.update(member)
+				.set(member.username, "비회원")
+				.where(member.age.lt(28))
+				.execute();
+		//벌크는 DB로 바로쏘기때문에 영속성 컨텍스트에는 안바뀌기에 
+		//둘이 상태가 안맞음 그래서
+		em.flush();
+		em.clear();
+		//초기화해야함
+	}
+
+	@Test
+	public void bulkAdd() throws Exception {
+		//기존 숫자에 1 더하기
+		long count = queryFactory
+				.update(member)
+				.set(member.age, member.age.add(1))
+				.execute();
+		
+		//곱하기는 multiply(x)
+	}
+
+	@Test
+	public void bulkDelete() throws Exception {
+		//18살 이상의 모든 회원을 지운다..
+		long count = queryFactory
+				.delete(member)
+				.where(member.age.gt(18))
+				.execute();
+	}
+	
+	
+	//-------------------------------------------------------------------------------------
+	//SQL function 호출하기
+	//-------------------------------------------------------------------------------------
+	
+
+	@Test
+	public void sqlFunction() throws Exception {
+		
+		//member > M으로 변경하는 replace 함수 사용
+		List<String> result = queryFactory
+				.select(Expressions.stringTemplate("function('replace', {0}, {1},{2})", 
+						member.username, "member", "M"))
+						.from(member)
+						.fetch();
+		
+	}
+	
+	@Test
+	public void sqlFunction2() throws Exception {
+		
+		//소문자로 변경해서 비교해라
+		List<String> result = queryFactory
+				.select(member.username)
+				.from(member)
+//				.where(member.username.eq(Expressions.stringTemplate("function('lower', {0})",
+//						member.username)))
+				.where(member.username.eq(member.username.lower()))
+				.fetch();
+		
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+
+	//====================================================================================
+	//실무 활용 - 순수 JPA와 Querydsl
+	//====================================================================================
+	
+	//-------------------------------------------------------------------------------------
+	//순수 JPA 리포지토리와 Querydsl
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//동적 쿼리와 성능 최적화 조회 - Builder 사용
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//동적 쿼리와 성능 최적화 조회 - Where절 파라미터 사용
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//조회 API 컨트롤러 개발
 	//-------------------------------------------------------------------------------------
 
 
-
+	//====================================================================================
+	//실무 활용 - 스프링 데이터 JPA와 Querydsl
+	//====================================================================================
 
 	//-------------------------------------------------------------------------------------
-	//조인 - on절 (JPA 2.1부터 지원)
+	//스프링 데이터 JPA 리포지토리로 변경
 	//-------------------------------------------------------------------------------------
 
+	//-------------------------------------------------------------------------------------
+	//사용자 정의 리포지토리
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//스프링 데이터 페이징 활용1 - Querydsl 페이징 연동
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//스프링 데이터 페이징 활용2 - CountQuery 최적화
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//스프링 데이터 페이징 활용3 - 컨트롤러 개발
+	//-------------------------------------------------------------------------------------
 
+	//====================================================================================
+	//스프링 데이터 JPA가 제공하는 Querydsl 기능
+	//====================================================================================
 
-
+	//-------------------------------------------------------------------------------------
+	//인터페이스 지원 - QuerydslPredicateExecutor
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//Querydsl Web 지원
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//리포지토리 지원 - QuerydslRepositorySupport
+	//-------------------------------------------------------------------------------------
+	
+	//-------------------------------------------------------------------------------------
+	//Querydsl 지원 클래스 직접 만들기
+	//-------------------------------------------------------------------------------------
 
 
 }
